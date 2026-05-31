@@ -1,0 +1,148 @@
+// Sourcerer App - Hexagonal Architecture Refactoring
+
+buildscript {
+    ext.kotlin_version = '1.2.31'
+    repositories {
+        mavenCentral()
+        jcenter()
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath "com.google.protobuf:protobuf-gradle-plugin:0.8.10"
+        classpath "org.junit.platform:junit-platform-gradle-plugin:1.0.1"
+    }
+}
+
+plugins {
+    id 'de.fuerstenau.buildconfig' version '1.1.8'
+}
+
+apply plugin: "idea"
+apply plugin: "java"
+apply plugin: "kotlin"
+apply plugin: "application"
+apply plugin: "com.google.protobuf"
+apply plugin: "org.junit.platform.gradle.plugin"
+
+buildConfig {
+    clsName = 'BuildConfig'
+    packageName = 'app'
+
+    // API.
+    def apiBasePath = project.hasProperty('api') ? api : 'https://sourcerer.io/api/commit'
+    buildConfigField 'String', 'API_BASE_PATH', apiBasePath
+
+    // Common.
+    buildConfigField 'String', 'PROFILE_URL', 'https://sourcerer.io/'
+
+    // App version.
+    buildConfigField 'int', 'VERSION_CODE', '30'
+    buildConfigField 'String', 'VERSION', '0.3.18'
+
+    // Logging.
+    buildConfigField 'String', 'ENV', project.hasProperty('env') ? env : 'production'
+    buildConfigField 'String', 'LOG_LEVEL', project.hasProperty('log') ? log : 'info'
+    buildConfigField 'boolean', 'SILENT_USER_OUTPUT', project.hasProperty('silent') ? silent : 'false'
+    buildConfigField 'boolean', 'SENTRY_ENABLED', project.hasProperty('sentry') ? sentry : 'false'
+    buildConfigField 'String', 'SENTRY_DSN', 'https://0263d6473bd24a9ba40e25aa5fb0a242:c5451dc815074bff8ce3fb9f0851f2f5@sentry.io/233260'
+    buildConfigField 'boolean', 'PRINT_STACK_TRACE', 'false'
+
+    // Google Analytics.
+    buildConfigField 'String', 'GA_BASE_PATH', 'https://www.google-analytics.com'
+    buildConfigField 'String', 'GA_TRACKING_ID', 'UA-107129190-2'
+    buildConfigField 'boolean', 'IS_GA_ENABLED', 'true'
+
+    // Models storage path.
+    buildConfigField 'String', 'LIBRARY_MODELS_URL', 'https://storage.googleapis.com/sourcerer-app/library-models/v2/'
+
+    // Hashing.
+    buildConfigField 'boolean', 'COMMIT_HASHER_ENABLED', project.hasProperty('commit-hasher-enabled') ? project.property('commit-hasher-enabled').toString() : 'true'
+    buildConfigField 'boolean', 'FACT_HASHER_ENABLED', project.hasProperty('fact-hasher-enabled') ? project.property('fact-hasher-enabled').toString() : 'true'
+    buildConfigField 'boolean', 'LONGEVITY_ENABLED', project.hasProperty('longevity-enabled') ? project.property('longevity-enabled').toString() : 'false'
+    buildConfigField 'long', 'HEARTBEAT_RATE', project.hasProperty('heartbeat-rate') ? project.property('heartbeat-rate').toString() : '60000'
+    buildConfigField 'boolean', 'META_HASHER_ENABLED', project.hasProperty('meta-hasher-enabled') ? project.property('meta-hasher-enabled').toString() : 'true'
+    buildConfigField 'boolean', 'DISTANCES_ENABLED', project.hasProperty('distances-enabled') ? project.property('distances-enabled').toString() : 'true'
+
+    buildConfig
+}
+
+junitPlatform {
+    filters {
+        engines {
+            include 'spek'
+        }
+    }
+}
+
+task cleanData {
+    delete 'build/libs/data'
+    delete 'build/kotlin/data'
+}
+
+test.dependsOn cleanData
+
+mainClassName = "app.MainKt"
+
+repositories {
+    mavenCentral()
+    jcenter()
+    maven { url "https://dl.bintray.com/jetbrains/spek" }
+    flatDir {
+        dirs 'libs'
+    }
+}
+
+dependencies {
+    compile "org.jetbrains.kotlin:kotlin-stdlib-jre8:$kotlin_version"
+    compile "org.jetbrains.kotlin:kotlin-reflect:$kotlin_version"
+    compile "com.beust:jcommander:1.72"
+    compile 'com.google.protobuf:protobuf-java:3.5.1'
+    compile 'commons-codec:commons-codec:1.5'
+    compile 'com.fasterxml.jackson.core:jackson-databind:2.9.5'
+    compile 'com.fasterxml.jackson.module:jackson-module-kotlin:2.9.5'
+    compile 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.9.5'
+    compile 'io.reactivex.rxjava2:rxjava:2.1.12'
+    compile 'com.github.kittinunf.fuel:fuel:1.12.1'
+    compile 'com.github.kittinunf.fuel:fuel-rxjava:1.12.1'
+    compile 'org.eclipse.jgit:org.eclipse.jgit:4.9.0.201710071750-r'
+    compile 'org.slf4j:slf4j-nop:1.7.2'
+    compile 'io.sentry:sentry:1.7.3'
+    compile 'org.json:json:20180813'
+
+    testCompile 'commons-io:commons-io:2.6'
+    testCompile 'org.jetbrains.kotlin:kotlin-test'
+    testCompile 'org.jetbrains.spek:spek-api:1.1.5'
+    testCompile 'org.junit.platform:junit-platform-runner:1.0.1'
+    testRuntime 'org.jetbrains.spek:spek-junit-platform-engine:1.1.5'
+
+    // ArchUnit for architecture validation tests.
+    testCompile 'com.tngtech.archunit:archunit-junit4:1.2.1'
+    testCompile 'junit:junit:4.12'
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.5.1"
+    }
+}
+
+sourceSets.main.java.srcDirs += 'build/generated/source/proto/main/java'
+sourceSets.test.java.srcDirs += 'src/test/kotlin'
+compileKotlin.dependsOn ':generateProto'
+
+// Include dependent libraries in archive.
+jar {
+    manifest {
+        attributes "Main-Class": "$mainClassName"
+    }
+
+    from {
+        configurations.compile.collect { it.isDirectory() ? it : zipTree(it) }
+    } {
+        exclude "META-INF/*.SF"
+        exclude "META-INF/*.DSA"
+        exclude "META-INF/*.RSA"
+    }
+
+    baseName 'sourcerer-app-hex'
+}
