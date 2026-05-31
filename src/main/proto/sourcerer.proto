@@ -1,0 +1,168 @@
+// Copyright 2017 Sourcerer, Inc. All Rights Reserved.
+// Author: Anatoly Kislov (anatoly@sourcerer.io)
+// Author: Liubov Yaronskaya (lyaronskaya@sourcerer.io)
+
+syntax = "proto3";
+
+// Java compiler settings.
+package app;
+option java_package = "app";
+option java_outer_classname = "Protos";
+
+// Commit.
+message Commit {
+    // Re-hash of hash of a commit.
+    string rehash = 1;
+
+    // Hash of repo.
+    string repo_rehash = 2;
+
+    // Re-hash of hash of tree object of a commit.
+    string tree_rehash = 3;
+
+    // Information about author of a commit.
+    string author_name = 4;
+    string author_email = 5;
+
+    // Timestamp of a commit creation in seconds UTC+0.
+    uint64 date = 6;
+
+    // Is quality commit.
+    bool is_qommit = 7;
+
+    // Number of lines for a whole commit.
+    int32 num_lines_added = 8;
+    int32 num_lines_deleted = 9;
+
+    // Tech stats on a commit.
+    repeated CommitStats stats = 10;
+}
+
+// Tech stats on a commit.
+message CommitStats {
+    // Number of lines for a specific technology.
+    int32 num_lines_added = 1;
+    int32 num_lines_deleted = 2;
+
+    // Technology type (language/framework/library).
+    int32 type = 3;
+
+    // Technology name.
+    string tech = 4;
+}
+
+// Used to send multiple commits in one request.
+message CommitGroup {
+    repeated Commit commits = 1;
+}
+
+// Key-value statistics for fun facts.
+message Fact {
+    int32 code = 1;
+    int32 key = 2;
+    string value1 = 3;
+    string value2 = 4;
+    string value3 = 5;
+    string value4 = 6;
+    string email = 7;
+    string repo_rehash = 8;
+}
+
+// Used to send multiple stats in one request.
+message FactGroup {
+    repeated Fact facts = 1;
+}
+
+// Used to authors for invitational procedures.
+message Author {
+    string email = 1;
+    string name = 3;
+    string repo_rehash = 2;
+}
+
+message AuthorGroup {
+    repeated Author authors = 1;
+}
+
+// User properties and indentity information about repos.
+message User {
+    // List of known repos containing basic information for indentifying repo.
+    repeated Repo repos = 1;
+    // List of known emails.
+    repeated UserEmail emails = 2;
+}
+
+// Email of user with its status information.
+message UserEmail {
+    string email = 1;
+    bool primary = 2;
+    bool verified = 3;
+}
+
+// Repository parameters for hashing.
+message Repo {
+    // Repository rehash according to initial commit rehash, remote and user
+    // handle if no remote presented.
+    string rehash = 1;
+
+    // Rehash of first commit in repo. Used for indentifying forks.
+    string initial_commit_rehash = 2;
+
+    // Authors' email filter for hashed commits. If empty list then hash only
+    // commits that created by current user.
+    repeated string emails = 4;
+
+    // Raw commits server history. Used to find overlap of commits. Hashing
+    // starts after last commit from the overlap.
+    repeated Commit commits = 5;
+
+    // Meta info about repo. Is not used for a locally run app.
+    RepoMeta meta = 6;
+
+    // Processing session id, used to check the processing status.
+    uint32 process_entry_id = 7;
+}
+
+// Meta info about repo. Is not used for a locally run app.
+message RepoMeta {
+    string hosterId = 1;
+    string service = 6;
+    string name = 2;
+    string ownerName = 3;
+    string description = 7;
+    string htmlUrl = 4;
+    string cloneUrl = 5;
+}
+
+// Errors from server.
+message Error {
+    uint32 code = 1;
+    string message = 2;
+}
+
+message Errors {
+    repeated Error errors = 1;
+}
+
+// Status of processing.
+message Process {
+    uint32 id = 1;
+    repeated ProcessEntry entries = 4;
+    uint32 request_num_entries = 5;
+}
+
+message ProcessEntry {
+    uint32 id = 1;
+    uint32 status = 2;
+    uint32 error_code = 3;
+}
+
+message AuthorDistance {
+    string email = 1;
+    double score = 2;
+    string repo_rehash = 3;
+}
+
+message AuthorDistanceGroup {
+    repeated AuthorDistance author_distances = 1;
+}
