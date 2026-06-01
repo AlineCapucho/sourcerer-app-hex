@@ -3,6 +3,3 @@
 /out/
 *.iml
 .idea/
-gradle/
-gradlew
-gradlew.bat
