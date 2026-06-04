@@ -8,6 +8,8 @@ data class Result<T>(val data: T? = null, val error: ApiError? = null) {
 
     fun isSuccess(): Boolean = error == null
 
+    fun isOutOfDate(): Boolean = error?.serverCode == ServerApiPort.OUT_OF_DATE
+
     fun getOrThrow(): T {
         if (error != null) {
             throw error.exception ?: RuntimeException(error.message)
@@ -27,7 +29,9 @@ data class Result<T>(val data: T? = null, val error: ApiError? = null) {
  */
 data class ApiError(
     val message: String = "",
+    val serverCode: Int = 0,
+    val isAuthError: Boolean = false,
     val exception: Throwable? = null
 ) {
-    constructor(e: Throwable) : this(e.message ?: "", e)
+    constructor(e: Throwable) : this(message = e.message ?: "", exception = e)
 }

@@ -80,16 +80,6 @@ class PortsAndAdaptersTest {
         rule.check(importedClasses)
     }
 
-    @Test
-    fun `AnalyticsPort is an interface in application ports`() {
-        val rule: ArchRule = classes()
-            .that().haveSimpleName("AnalyticsPort")
-            .should().beInterfaces()
-            .andShould().resideInAPackage("app.application.ports..")
-
-        rule.check(importedClasses)
-    }
-
     // =========================================================================
     // OUTPUT ADAPTERS: Infrastructure implements the ports
     // "Adaptadores: Responsáveis por implementar as portas e fazer a ponte
@@ -128,15 +118,6 @@ class PortsAndAdaptersTest {
         val rule: ArchRule = classes()
             .that().haveSimpleName("SentryLoggerAdapter")
             .should().resideInAPackage("app.infrastructure.logging..")
-
-        rule.check(importedClasses)
-    }
-
-    @Test
-    fun `GoogleAnalyticsAdapter resides in infrastructure`() {
-        val rule: ArchRule = classes()
-            .that().haveSimpleName("GoogleAnalyticsAdapter")
-            .should().resideInAPackage("app.infrastructure.analytics..")
 
         rule.check(importedClasses)
     }

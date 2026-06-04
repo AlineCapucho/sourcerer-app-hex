@@ -7,6 +7,7 @@ import app.domain.entities.Commit
 import app.domain.entities.LocalRepo
 import app.domain.entities.Repo
 import app.domain.errors.EmptyRepoException
+import app.domain.services.CommitPathData
 import app.domain.valueobjects.DiffContent
 import app.domain.valueobjects.DiffFile
 import app.domain.valueobjects.DiffRange
@@ -259,6 +260,52 @@ class JGitRepositoryAdapter(
             )
             localRepo.remoteOrigin =
                 config.getString("remote", "origin", "url") ?: ""
+        } finally {
+            git.repository?.close()
+            git.close()
+        }
+    }
+
+    override fun getCommitPathData(repoPath: String): List<app.domain.services.CommitPathData> {
+        val git = openGit(repoPath)
+        try {
+            val jgitRepo = git.repository
+            val revWalk = RevWalk(jgitRepo)
+            val head = revWalk.parseCommit(getDefaultBranchHead(git))
+
+            val df = DiffFormatter(DisabledOutputStream.INSTANCE)
+            df.setRepository(jgitRepo)
+            df.isDetectRenames = true
+
+            val result = mutableListOf<app.domain.services.CommitPathData>()
+            revWalk.markStart(head)
+            var commit: RevCommit? = revWalk.next()
+
+            while (commit != null) {
+                val parentCommit: RevCommit? = revWalk.next()
+                val email = commit.authorIdent.emailAddress.toLowerCase()
+                val timestamp = commit.authorIdent.getWhen().time / 1000
+
+                val diffEntries = df.scan(parentCommit, commit)
+                val paths = diffEntries.map { diff ->
+                    if (diff.newPath != DiffEntry.DEV_NULL) diff.newPath
+                    else diff.oldPath
+                }
+
+                if (paths.isNotEmpty()) {
+                    result.add(app.domain.services.CommitPathData(
+                        email = email,
+                        paths = paths,
+                        timestamp = timestamp
+                    ))
+                }
+
+                commit = parentCommit
+            }
+
+            revWalk.dispose()
+            df.close()
+            return result
         } finally {
             git.repository?.close()
             git.close()

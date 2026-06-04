@@ -3,6 +3,7 @@ package app.application.ports
 import app.domain.entities.Author
 import app.domain.entities.Commit
 import app.domain.entities.Repo
+import app.domain.services.CommitPathData
 import io.reactivex.Observable
 
 /**
@@ -42,4 +43,10 @@ interface GitRepositoryPort {
      */
     fun parseGitConfig(repoPath: String,
                        localRepo: app.domain.entities.LocalRepo)
+
+    /**
+     * Returns commit path data for calculating author distances.
+     * Each entry contains (email, paths modified, timestamp).
+     */
+    fun getCommitPathData(repoPath: String): List<CommitPathData>
 }

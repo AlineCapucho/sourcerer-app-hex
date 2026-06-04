@@ -29,6 +29,7 @@ class EmailState(
         val configEmails = hashSetOf<String>()
 
         // Add emails from git configs of tracked repos.
+        val reposEmails = hashMapOf<String, HashSet<String>>()
         for (repo in container.configurator.getLocalRepos()) {
             try {
                 val tempRepo = app.domain.entities.LocalRepo(repo.path)
@@ -37,6 +38,10 @@ class EmailState(
                 if (email.isNotEmpty() && !knownEmails.contains(email)) {
                     configEmails.add(email)
                 }
+                // Fetch emails from repo for "no-email" warning.
+                val (_, authors, _) = container.gitRepository
+                    .fetchRehashesAndAuthors(repo.path)
+                reposEmails[repo.path] = authors.map { it.email }.toHashSet()
             } catch (e: Exception) {
                 container.logger.error(e, "Error while parsing repo")
             }
@@ -45,9 +50,38 @@ class EmailState(
         if (configEmails.isNotEmpty()) {
             container.logger.print("Your git config contains untracked emails:")
             configEmails.forEach { email -> println(email) }
-            if (confirm("Do you want to add these emails to your account?",
+            if (confirm("Do you want to add this emails to your account?",
                     defaultIsYes = true)) {
                 newEmails.addAll(configEmails)
+            }
+        }
+
+        // Show warning if no commits from user in some repos.
+        val reposUserMissing = mutableListOf<String>()
+        for (repo in container.configurator.getLocalRepos()) {
+            val presentedEmails = reposEmails[repo.path]
+            val updatedEmails = knownEmails + newEmails
+            if (presentedEmails != null) {
+                var userMissing = true
+                for (email in presentedEmails) {
+                    if (updatedEmails.contains(email)) {
+                        userMissing = false
+                        break
+                    }
+                }
+                if (userMissing) {
+                    reposUserMissing.add(repo.path)
+                }
+            }
+        }
+        if (reposUserMissing.isNotEmpty()) {
+            if (reposUserMissing.size == 1) {
+                container.logger.print("${reposUserMissing.first()} repo does not " +
+                    "contains commits from emails you've specified")
+            } else {
+                container.logger.print("Following repos do not contain commits from " +
+                    "emails you've specified:")
+                reposUserMissing.forEach { container.logger.print(it) }
             }
         }
 
