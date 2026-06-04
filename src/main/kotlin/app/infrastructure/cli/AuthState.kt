@@ -1,7 +1,7 @@
 package app.infrastructure.cli
 
 import app.BuildConfig
-import app.application.ports.ApiError
+import app.application.ports.ServerApiPort
 import app.infrastructure.config.Container
 import java.io.IOError
 
@@ -78,13 +78,21 @@ class AuthState(
     private fun tryAuth(): Boolean {
         try {
             container.logger.print("Signing in...")
+
+            // Check for out-of-date app version.
             val result = container.serverApi.authorize()
+            if (result.isOutOfDate()) {
+                container.logger.print("App is out of date. Please get new version at " +
+                    "https://sourcerer.io")
+                retry = false
+                return false
+            }
             if (!result.isSuccess()) {
                 result.onErrorThrow()
             }
 
-            val userResult = container.serverApi.getUser()
-            val user = userResult.getOrThrow()
+            // Fetch user data from server.
+            val user = container.serverApi.getUser().getOrThrow()
             container.configurator.setUser(user)
 
             container.logger.print("Signed in successfully. Your profile page is " +
@@ -95,8 +103,14 @@ class AuthState(
 
             return true
         } catch (e: Throwable) {
-            container.logger.print("Authentication error. Try again.")
-            container.logger.error(e, "Auth error")
+            if (e is app.application.ports.ApiError || (e.message?.contains("401") == true) ||
+                (e.message?.contains("403") == true)) {
+                container.logger.print("Authentication error. Try again.")
+            } else {
+                container.logger.print("Connection problems. Try again later.")
+                container.logger.error(e, "Auth error")
+                retry = false
+            }
         }
 
         return false

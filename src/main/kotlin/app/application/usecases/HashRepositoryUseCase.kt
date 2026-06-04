@@ -8,9 +8,7 @@ import app.domain.entities.*
 import app.domain.errors.EmptyRepoException
 import app.domain.errors.HashingException
 import app.domain.errors.InvalidRepoException
-import app.domain.services.CommitStatsExtractorService
-import app.domain.services.LanguageDetectionService
-import app.domain.services.RehashCalculatorService
+import app.domain.services.*
 import app.domain.valueobjects.ProcessEntry
 import java.util.concurrent.TimeUnit
 
@@ -20,7 +18,11 @@ import java.util.concurrent.TimeUnit
  * This is the main orchestration use case. It coordinates:
  * - Validating the repository
  * - Crawling commit history
- * - Extracting statistics per commit
+ * - Extracting statistics per commit (CommitHasher)
+ * - Calculating per-author facts (FactHasher)
+ * - Calculating meta facts (MetaHasher)
+ * - Computing code longevity (CodeLongevity)
+ * - Computing author distances (AuthorDistance)
  * - Sending results to the server API
  */
 class HashRepositoryUseCase(
@@ -28,7 +30,16 @@ class HashRepositoryUseCase(
     private val gitRepository: GitRepositoryPort,
     private val configurator: ConfigurationPort,
     private val logger: LoggerPort,
-    private val languageDetector: LanguageDetectionService
+    private val languageDetector: LanguageDetectionService,
+    private val factHashingService: FactHashingService? = null,
+    private val metaHashingService: MetaHashingService? = null,
+    private val codeLongevityService: CodeLongevityService? = null,
+    private val authorDistanceService: AuthorDistanceService? = null,
+    private val commitHasherEnabled: Boolean = true,
+    private val factHasherEnabled: Boolean = true,
+    private val longevityEnabled: Boolean = false,
+    private val metaHasherEnabled: Boolean = true,
+    private val distancesEnabled: Boolean = true
 ) {
 
     fun execute(localRepo: LocalRepo) {
@@ -57,6 +68,9 @@ class HashRepositoryUseCase(
             // Get repo setup (commits, emails to hash) from server.
             postRepoFromServer(serverRepo)
 
+            // Delete locally missing commits from server.
+            deleteStaleCommits(serverRepo, rehashes)
+
             // Send all repo emails for invites.
             postAuthorsToServer(authors, serverRepo)
 
@@ -80,39 +94,116 @@ class HashRepositoryUseCase(
                 localRepo.path, serverRepo, filteredEmails,
                 extractCoauthors = true)
 
-            // Hash commits: extract stats and send to server.
-            val knownCommits = serverRepo.commits.toHashSet()
-            observable
-                .filter { commit -> !knownCommits.contains(commit) }
-                .filter { commit -> filteredEmails.contains(commit.author.email) }
-                .map { commit ->
-                    logger.printCommitDetail("Extracting stats")
-                    commit.stats = CommitStatsExtractorService.extract(
-                        commit.diffs, languageDetector)
-                    val statsNumStr = if (commit.stats.isNotEmpty()) {
-                        commit.stats.size.toString()
-                    } else "No"
-                    logger.printCommitDetail("$statsNumStr technology stats found")
-                    commit
-                }
-                .buffer(20, TimeUnit.SECONDS, 1000)
-                .subscribe({ commitsBundle ->
-                    val coauthorsCommits = commitsBundle
-                        .filter { it.coauthors.isNotEmpty() }
-                        .fold(mutableListOf<Commit>()) { acc, commit ->
-                            acc.addAll(commit.coauthors.map { coauthor ->
-                                val newCommit = commit.copy()
-                                newCommit.author = coauthor
-                                newCommit
-                            })
-                            acc
-                        }
-                    val allCommits = commitsBundle + coauthorsCommits
-                    if (allCommits.isNotEmpty()) {
-                        serverApi.postCommits(allCommits).onErrorThrow()
-                        logger.info { "Sent ${allCommits.size} commits to server" }
+            // Use a connectable observable so multiple subscribers can share it.
+            val connectableObservable = observable.publish()
+
+            // --- CommitHasher: extract stats and send to server ---
+            if (commitHasherEnabled) {
+                val knownCommits = serverRepo.commits.toHashSet()
+                connectableObservable
+                    .filter { commit -> !knownCommits.contains(commit) }
+                    .filter { commit -> filteredEmails.contains(commit.author.email) }
+                    .map { commit ->
+                        logger.printCommitDetail("Extracting stats")
+                        commit.stats = CommitStatsExtractorService.extract(
+                            commit.diffs, languageDetector)
+                        val statsNumStr = if (commit.stats.isNotEmpty()) {
+                            commit.stats.size.toString()
+                        } else "No"
+                        logger.printCommitDetail("$statsNumStr technology stats found")
+                        commit
                     }
-                }, onError)
+                    .buffer(20, TimeUnit.SECONDS, 1000)
+                    .subscribe({ commitsBundle ->
+                        val coauthorsCommits = commitsBundle
+                            .filter { it.coauthors.isNotEmpty() }
+                            .fold(mutableListOf<Commit>()) { acc, commit ->
+                                acc.addAll(commit.coauthors.map { coauthor ->
+                                    val newCommit = commit.copy()
+                                    newCommit.author = coauthor
+                                    newCommit
+                                })
+                                acc
+                            }
+                        val allCommits = commitsBundle + coauthorsCommits
+                        if (allCommits.isNotEmpty()) {
+                            serverApi.postCommits(allCommits).onErrorThrow()
+                            logger.info { "Sent ${allCommits.size} commits to server" }
+                        }
+                    }, onError)
+            }
+
+            // --- FactHasher: calculate per-author statistical facts ---
+            if (factHasherEnabled && factHashingService != null) {
+                factHashingService.updateFromObservable(
+                    connectableObservable, serverRepo.rehash, rehashes,
+                    filteredEmails, onError)
+            }
+
+            // Start and synchronously wait until all subscribers complete.
+            logger.print("Stats computation. May take a while...")
+            connectableObservable.connect()
+
+            // Send computed facts to server.
+            if (factHasherEnabled && factHashingService != null) {
+                val facts = factHashingService.getComputedFacts()
+                if (facts.isNotEmpty()) {
+                    serverApi.postFacts(facts).onErrorThrow()
+                    logger.info { "Sent ${facts.size} facts to server" }
+                }
+            }
+
+            // --- CodeLongevity ---
+            if (longevityEnabled && codeLongevityService != null) {
+                try {
+                    val longevityFacts = codeLongevityService
+                        .calculateLongevityFacts(localRepo.path,
+                            serverRepo.rehash, filteredEmails)
+                    if (longevityFacts.isNotEmpty()) {
+                        serverApi.postFacts(longevityFacts).onErrorThrow()
+                        logger.info { "Sent ${longevityFacts.size} longevity facts to server" }
+                    }
+                } catch (e: Throwable) {
+                    onError(e)
+                }
+            }
+
+            // --- MetaHasher ---
+            if (metaHasherEnabled && metaHashingService != null) {
+                try {
+                    val userEmails = configurator.getUser().emails
+                        .map { it.email }
+                    val metaFacts = metaHashingService.calculateMetaFacts(
+                        repoRehash = serverRepo.rehash,
+                        authors = authors,
+                        commitsCount = commitsCount,
+                        userEmails = userEmails)
+                    if (metaFacts.isNotEmpty()) {
+                        serverApi.postFacts(metaFacts).onErrorThrow()
+                        logger.info { "Sent ${metaFacts.size} meta facts to server" }
+                    }
+                } catch (e: Throwable) {
+                    onError(e)
+                }
+            }
+
+            // --- AuthorDistance ---
+            if (distancesEnabled && authorDistanceService != null) {
+                try {
+                    val userEmails = configurator.getUser().emails
+                        .map { it.email }.toHashSet()
+                    val commitPathData = gitRepository
+                        .getCommitPathData(localRepo.path)
+                    val distances = authorDistanceService.calculateDistances(
+                        commitPathData, serverRepo.rehash, emails, userEmails)
+                    if (distances.isNotEmpty()) {
+                        serverApi.postAuthorDistances(distances).onErrorThrow()
+                        logger.info { "Sent ${distances.size} author distances to server" }
+                    }
+                } catch (e: Throwable) {
+                    onError(e)
+                }
+            }
 
             if (errors.isNotEmpty()) {
                 throw HashingException(errors)
@@ -174,5 +265,23 @@ class HashRepositoryUseCase(
         val processEntry = ProcessEntry(id = processEntryId, status = status,
             errorCode = errorCode)
         serverApi.postProcess(listOf(processEntry)).onErrorThrow()
+    }
+
+    /**
+     * Delete locally missing commits from server.
+     */
+    private fun deleteStaleCommits(serverRepo: Repo, rehashes: List<String>) {
+        val serverHistoryRehashes = serverRepo.commits
+            .map { commit -> commit.rehash }
+            .toHashSet()
+        val firstOverlapCommitRehash = rehashes.firstOrNull { rehash ->
+            serverHistoryRehashes.contains(rehash)
+        }
+        val deletedCommits = serverRepo.commits
+            .takeWhile { it.rehash != firstOverlapCommitRehash }
+        if (deletedCommits.isNotEmpty()) {
+            serverApi.deleteCommits(deletedCommits).onErrorThrow()
+            logger.info { "Sent ${deletedCommits.size} deleted commits to server" }
+        }
     }
 }
